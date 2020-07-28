@@ -197,6 +197,136 @@ Section Compile.
     eauto.
   Qed.
 
+  Ltac straightline_stackalloc :=
+  match goal with Hanybytes: Memory.anybytes ?a ?n ?mStack |- _ =>
+    let m := match goal with H : map.split ?mCobined ?m mStack |- _ => m end in
+    let mCombined := match goal with H : map.split ?mCobined ?m mStack |- _ => mCobined end in
+    let Hsplit := match goal with H : map.split ?mCobined ?m mStack |- _ => H end in
+    let Hm := multimatch goal with H : _ m |- _ => H end in
+    let Hm' := fresh Hm in
+    let Htmp := fresh in
+    rename Hm into Hm';
+    let stack := fresh "stack" in
+    let stack_length := fresh "length_" stack in (* MUST remain in context for deallocation *)
+    destruct (Array.anybytes_to_array_1 mStack a n Hanybytes) as (stack&Htmp&stack_length);
+    epose proof (ex_intro _ m (ex_intro _ mStack (conj Hsplit (conj Hm' Htmp)))
+                : Separation.sep _ (Array.array Separation.ptsto (Interface.word.of_Z (BinNums.Zpos BinNums.xH)) a _) mCombined) as Hm;
+    clear Htmp; (* upstream version clears more because it assumes only one sep assumption per memory, unclear how to reconcile *)
+    try (let m' := fresh m in rename m into m'); rename mCombined into m;
+    ( assert (BinInt.Z.of_nat (Datatypes.length stack) = n)
+        by (rewrite stack_length; apply (ZifyInst.of_nat_to_nat_eq n))
+     || fail 2 "negative stackalloc of size" n )
+  end.
+
+  Ltac straightline_stackdealloc :=
+  lazymatch goal with |- exists _ _, Memory.anybytes ?a ?n _ /\ map.split ?m _ _ /\ _ =>
+    let Hm := multimatch goal with Hm : _ m |- _ => Hm end in
+    let stack := match type of Hm with context [Array.array Separation.ptsto _ a ?stack] => stack end in
+    let length_stack := match goal with H : Datatypes.length stack = _ |- _ => H end in
+    let Hm' := fresh Hm in
+    pose proof Hm as Hm';
+    let Psep := match type of Hm with ?P _ => P end in
+    let Htmp := fresh "Htmp" in
+    eassert (Lift1Prop.iff1 Psep (Separation.sep _ (Array.array Separation.ptsto (Interface.word.of_Z (BinNums.Zpos BinNums.xH)) a stack))) as Htmp
+      by ecancel || fail "failed to find stack frame in" Psep "using ecancel";
+    eapply (fun m => proj1 (Htmp m)) in Hm;
+    let m' := fresh m in
+    rename m into m';
+    let mStack := fresh in
+    destruct Hm as (m&mStack&Hsplit&Hm&Harray1); move Hm at bottom;
+    pose proof Array.array_1_to_anybytes _ _ _ Harray1 as Hanybytes;
+    rewrite length_stack in Hanybytes;
+    refine (ex_intro _ m (ex_intro _ mStack (conj Hanybytes (conj Hsplit _))));
+    clear Htmp Hsplit mStack Harray1 Hanybytes
+  end.
+
+  Lemma compile_mul_using_stackalloc :
+    forall (locals: Semantics.locals) (mem: Semantics.mem)
+           (locals_ok : Semantics.locals -> Prop)
+      tr retvars (R0 R1 Rin:_->Prop) functions T (pred:T->_->_->Prop)
+      (sizeof_bignum:=32) (x y : bignum) x_ptr x_var y_ptr y_var out_var
+      k k_impl,
+      out_var <> x_var ->
+      out_var <> y_var ->
+      spec_of_mul functions ->
+      bounded_by loose_bounds x ->
+      bounded_by loose_bounds y ->
+      (Bignum x_ptr x * Bignum y_ptr y * Rin)%sep mem ->
+      R0 mem ->
+      map.get locals x_var = Some x_ptr ->
+      map.get locals y_var = Some y_ptr ->
+      let v := (eval x * eval y) mod M in
+      (let head := v in
+       forall out_ptr out m,
+         eval out mod M = head ->
+         bounded_by tight_bounds out ->
+         sep (Bignum out_ptr out) R0 m ->
+         let locals := map.put locals out_var out_ptr in
+         (find k_impl
+          implementing (pred (k (eval out mod M)))
+          and-returning retvars
+          and-locals-post locals_ok
+          with-locals locals and-memory m and-trace tr and-rest sep (Bignum out_ptr out) R1
+          and-functions functions)) ->
+      (let head := v in
+       find (cmd.stackalloc out_var sizeof_bignum (cmd.seq
+               (cmd.call [] mul [expr.var x_var; expr.var y_var;
+                                   expr.var out_var])
+               k_impl))
+       implementing (pred (dlet head k))
+       and-returning retvars
+       and-locals-post locals_ok
+       with-locals locals and-memory mem and-trace tr and-rest R1
+       and-functions functions).
+  Proof.
+    cbv [Placeholder] in *.
+    repeat (straightline || straightline').
+    split.
+    1:admit.
+    straightline.
+    straightline_stackalloc.
+    revert H11.
+    straightline_stackalloc.
+    repeat (straightline || straightline').
+
+    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    assert (old_out : bignum) by admit.
+    let array := match type of H5 with (R0 * ?array)%sep _ => array end in
+    assert (array = (Bignum a old_out)) as Harray by admit; rewrite Harray in H5.
+
+    handle_call; [ solve [eauto] .. | sepsimpl ].
+
+    repeat straightline.
+    progress match goal with H : _ mod M = ?x mod M
+                    |- context [dlet (?x mod M)] =>
+                    rewrite <-H
+    end.
+    eapply Proper_cmd; [eapply Proper_call|..].
+    2:eapply H8; eauto.
+    intros ? ? ? ?.
+
+    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    let array := match type of Harray with ?e = _ => e end in
+    erewrite (_:Bignum a _ = array) in H15.
+    let t := type of stack in
+    assert (new_bytes : t) by admit.
+    assert (length_new_bytes : length new_bytes = length stack) by admit.
+    rewrite <-length_new_bytes in H12.
+
+    destruct H15 as (?&?&?&?&?).
+    straightline.
+    straightline.
+    straightline_stackdealloc.
+
+    cbv [postcondition_cmd].
+    ssplit; eauto.
+
+    all : fail.
+  Admitted.
+
+
   Lemma compile_add :
     forall (locals: Semantics.locals) (mem: Semantics.mem)
            (locals_ok : Semantics.locals -> Prop)
@@ -244,6 +374,92 @@ Section Compile.
     end.
     eauto.
   Qed.
+
+  Lemma compile_add_using_stackalloc :
+    forall (locals: Semantics.locals) (mem: Semantics.mem)
+           (locals_ok : Semantics.locals -> Prop)
+      tr retvars (R0 R1 Rin:_->Prop) functions T (pred:T->_->_->Prop)
+      (sizeof_bignum:=32) (x y : bignum) x_ptr x_var y_ptr y_var out_var
+      k k_impl,
+      out_var <> x_var ->
+      out_var <> y_var ->
+      spec_of_add functions ->
+      bounded_by tight_bounds x ->
+      bounded_by tight_bounds y ->
+      (Bignum x_ptr x * Bignum y_ptr y * Rin)%sep mem ->
+      R0 mem ->
+      map.get locals x_var = Some x_ptr ->
+      map.get locals y_var = Some y_ptr ->
+      let v := (eval x + eval y) mod M in
+      (let head := v in
+       forall out_ptr out m,
+         eval out mod M = head ->
+         bounded_by loose_bounds out ->
+         sep (Bignum out_ptr out) R0 m ->
+         let locals := map.put locals out_var out_ptr in
+         (find k_impl
+          implementing (pred (k (eval out mod M)))
+          and-returning retvars
+          and-locals-post locals_ok
+          with-locals locals and-memory m and-trace tr and-rest sep (Bignum out_ptr out) R1
+          and-functions functions)) ->
+      (let head := v in
+       find (cmd.stackalloc out_var sizeof_bignum (cmd.seq
+               (cmd.call [] add [expr.var x_var; expr.var y_var;
+                                   expr.var out_var])
+               k_impl))
+       implementing (pred (dlet head k))
+       and-returning retvars
+       and-locals-post locals_ok
+       with-locals locals and-memory mem and-trace tr and-rest R1
+       and-functions functions).
+  Proof.
+    cbv [Placeholder] in *.
+    repeat (straightline || straightline').
+    split.
+    1:admit.
+    straightline.
+    straightline_stackalloc.
+    revert H11.
+    straightline_stackalloc.
+    repeat (straightline || straightline').
+
+    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    assert (old_out : bignum) by admit.
+    let array := match type of H5 with (R0 * ?array)%sep _ => array end in
+    assert (array = (Bignum a old_out)) as Harray by admit; rewrite Harray in H5.
+
+    handle_call; [ solve [eauto] .. | sepsimpl ].
+
+    repeat straightline.
+    match goal with H : _ mod M = ?x mod M
+                    |- context [dlet (?x mod M)] =>
+                    rewrite <-H
+    end.
+    eapply Proper_cmd; [eapply Proper_call|..].
+    2:eapply H8; eauto.
+    intros ? ? ? ?.
+
+    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    let array := match type of Harray with ?e = _ => e end in
+    erewrite (_:Bignum a _ = array) in H15.
+    let t := type of stack in
+    assert (new_bytes : t) by admit.
+    assert (length_new_bytes : length new_bytes = length stack) by admit.
+    rewrite <-length_new_bytes in H12.
+
+    destruct H15 as (?&?&?&?&?).
+    straightline.
+    straightline.
+    straightline_stackdealloc.
+
+    cbv [postcondition_cmd].
+    ssplit; eauto.
+
+    all : fail.
+  Admitted.
 
   Lemma compile_sub :
     forall (locals: Semantics.locals) (mem: Semantics.mem)
@@ -293,6 +509,92 @@ Section Compile.
     eauto.
   Qed.
 
+  Lemma compile_sub_using_stackalloc :
+    forall (locals: Semantics.locals) (mem: Semantics.mem)
+           (locals_ok : Semantics.locals -> Prop)
+      tr retvars (R0 R1 Rin:_->Prop) functions T (pred:T->_->_->Prop)
+      (sizeof_bignum:=32) (x y : bignum) x_ptr x_var y_ptr y_var out_var
+      k k_impl,
+      out_var <> x_var ->
+      out_var <> y_var ->
+      spec_of_sub functions ->
+      bounded_by tight_bounds x ->
+      bounded_by tight_bounds y ->
+      (Bignum x_ptr x * Bignum y_ptr y * Rin)%sep mem ->
+      R0 mem ->
+      map.get locals x_var = Some x_ptr ->
+      map.get locals y_var = Some y_ptr ->
+      let v := (eval x - eval y) mod M in
+      (let head := v in
+       forall out_ptr out m,
+         eval out mod M = head ->
+         bounded_by loose_bounds out ->
+         sep (Bignum out_ptr out) R0 m ->
+         let locals := map.put locals out_var out_ptr in
+         (find k_impl
+          implementing (pred (k (eval out mod M)))
+          and-returning retvars
+          and-locals-post locals_ok
+          with-locals locals and-memory m and-trace tr and-rest sep (Bignum out_ptr out) R1
+          and-functions functions)) ->
+      (let head := v in
+       find (cmd.stackalloc out_var sizeof_bignum (cmd.seq
+               (cmd.call [] sub [expr.var x_var; expr.var y_var;
+                                   expr.var out_var])
+               k_impl))
+       implementing (pred (dlet head k))
+       and-returning retvars
+       and-locals-post locals_ok
+       with-locals locals and-memory mem and-trace tr and-rest R1
+       and-functions functions).
+  Proof.
+    cbv [Placeholder] in *.
+    repeat (straightline || straightline').
+    split.
+    1:admit.
+    straightline.
+    straightline_stackalloc.
+    revert H11.
+    straightline_stackalloc.
+    repeat (straightline || straightline').
+
+    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    assert (old_out : bignum) by admit.
+    let array := match type of H5 with (R0 * ?array)%sep _ => array end in
+    assert (array = (Bignum a old_out)) as Harray by admit; rewrite Harray in H5.
+
+    handle_call; [ solve [eauto] .. | sepsimpl ].
+
+    repeat straightline.
+    match goal with H : _ mod M = ?x mod M
+                    |- context [dlet (?x mod M)] =>
+                    rewrite <-H
+    end.
+    eapply Proper_cmd; [eapply Proper_call|..].
+    2:eapply H8; eauto.
+    intros ? ? ? ?.
+
+    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    let array := match type of Harray with ?e = _ => e end in
+    erewrite (_:Bignum a _ = array) in H15.
+    let t := type of stack in
+    assert (new_bytes : t) by admit.
+    assert (length_new_bytes : length new_bytes = length stack) by admit.
+    rewrite <-length_new_bytes in H12.
+
+    destruct H15 as (?&?&?&?&?).
+    straightline.
+    straightline.
+    straightline_stackdealloc.
+
+    cbv [postcondition_cmd].
+    ssplit; eauto.
+
+    all : fail.
+  Admitted.
+
   Lemma compile_square :
     forall (locals: Semantics.locals) (mem: Semantics.mem)
            (locals_ok : Semantics.locals -> Prop)
@@ -337,6 +639,88 @@ Section Compile.
     end.
     eauto.
   Qed.
+
+  Lemma compile_square_using_stackalloc :
+    forall (locals: Semantics.locals) (mem: Semantics.mem)
+           (locals_ok : Semantics.locals -> Prop)
+      tr retvars (R0 R1 Rin:_->Prop) functions T (pred:T->_->_->Prop)
+      (sizeof_bignum:=32) (x : bignum) x_ptr x_var out_var
+      k k_impl,
+      out_var <> x_var ->
+      spec_of_square functions ->
+      bounded_by loose_bounds x ->
+      (Bignum x_ptr x * Rin)%sep mem ->
+      R0 mem ->
+      map.get locals x_var = Some x_ptr ->
+      let v := (eval x ^ 2) mod M in
+      (let head := v in
+       forall out_ptr out m,
+         eval out mod M = head ->
+         bounded_by tight_bounds out ->
+         sep (Bignum out_ptr out) R0 m ->
+         let locals := map.put locals out_var out_ptr in
+         (find k_impl
+          implementing (pred (k (eval out mod M)))
+          and-returning retvars
+          and-locals-post locals_ok
+          with-locals locals and-memory m and-trace tr and-rest sep (Bignum out_ptr out) R1
+          and-functions functions)) ->
+      (let head := v in
+       find (cmd.stackalloc out_var sizeof_bignum (cmd.seq
+               (cmd.call [] square [expr.var x_var; expr.var out_var])
+               k_impl))
+       implementing (pred (dlet head k))
+       and-returning retvars
+       and-locals-post locals_ok
+       with-locals locals and-memory mem and-trace tr and-rest R1
+       and-functions functions).
+  Proof.
+    cbv [Placeholder] in *.
+    repeat (straightline || straightline').
+    split.
+    1:admit.
+    straightline.
+    straightline_stackalloc.
+    revert H8.
+    straightline_stackalloc.
+    repeat (straightline || straightline').
+
+    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    assert (old_out : bignum) by admit.
+    let array := match type of H3 with (R0 * ?array)%sep _ => array end in
+    assert (array = (Bignum a old_out)) as Harray by admit; rewrite Harray in *.
+
+    handle_call; [ solve [eauto] .. | sepsimpl ].
+
+    repeat straightline.
+    rewrite Z.pow_2_r in *.
+    match goal with H : _ mod M = ?x mod M
+                    |- context [dlet (?x mod M)] =>
+                    rewrite <-H
+    end.
+    eapply Proper_cmd; [eapply Proper_call|..].
+    2:eapply H5; eauto.
+    intros ? ? ? ?.
+
+    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    let array := match type of Harray with ?e = _ => e end in
+    erewrite (_:Bignum a _ = array) in H12.
+    let t := type of stack in
+    assert (new_bytes : t) by admit.
+    assert (length_new_bytes : length new_bytes = length stack) by admit.
+
+    destruct H12 as (?&?&?&?&?).
+    straightline.
+    straightline.
+    straightline_stackdealloc.
+
+    cbv [postcondition_cmd].
+    ssplit; eauto.
+
+    all : fail.
+  Admitted.
 
   Lemma compile_scmula24 :
     forall (locals: Semantics.locals) (mem: Semantics.mem)

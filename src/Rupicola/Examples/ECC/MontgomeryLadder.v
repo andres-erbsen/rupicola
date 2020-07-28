@@ -76,43 +76,32 @@ Section __.
        result into U. *)
     Definition MontLadderResult
                (K : scalar)
-               (pK pU pX1 pZ1 pX2 pZ2 pA pAA pB pBB pE pC pD pDA pCB : Semantics.word)
+               (pK pU pX1 pZ1 pX2 pZ2 : Semantics.word)
                (result : Z)
       : list word -> Semantics.mem -> Prop :=
       fun _ =>
-      (liftexists U' X1' Z1' X2' Z2' A' AA' B' BB' E' C' D' DA' CB' : bignum,
+      (liftexists U' X1' Z1' X2' Z2': bignum,
          (emp (result = eval U' mod M)
           * (Scalar pK K * Bignum pU U'
              * Bignum pX1 X1' * Bignum pZ1 Z1'
-             * Bignum pX2 X2' * Bignum pZ2 Z2'
-             * Bignum pA A' * Bignum pAA AA'
-             * Bignum pB B' * Bignum pBB BB'
-             * Bignum pE E' * Bignum pC C' * Bignum pD D'
-             * Bignum pDA DA' * Bignum pCB CB'))%sep).
+             * Bignum pX2 X2' * Bignum pZ2 Z2'))%sep).
 
     Instance spec_of_montladder : spec_of "montladder" :=
       forall!
             (K : scalar)
             (U X1 Z1 X2 Z2 : bignum) (* u, P1, P2 *)
-            (A AA B BB E C D DA CB : bignum) (* ladderstep intermediates *)
-            (pK pU pX1 pZ1 pX2 pZ2
-                pA pAA pB pBB pE pC pD pDA pCB : Semantics.word),
+            (pK pU pX1 pZ1 pX2 pZ2: Semantics.word),
         (fun R m =>
            bounded_by tight_bounds U
            /\ (Scalar pK K * Bignum pU U
                * Placeholder pX1 X1 * Placeholder pZ1 Z1
-               * Placeholder pX2 X2 * Placeholder pZ2 Z2
-               * Placeholder pA A * Placeholder pAA AA
-               * Placeholder pB B * Placeholder pBB BB
-               * Placeholder pE E * Placeholder pC C
-               * Placeholder pD D * Placeholder pDA DA
-               * Placeholder pCB CB * R)%sep m)
+               * Placeholder pX2 X2 * Placeholder pZ2 Z2 * R)%sep m)
           ===>
           "montladder" @
-          [pK; pU; pX1; pZ1; pX2; pZ2; pA; pAA; pB; pBB; pE; pC; pD; pDA; pCB]
+          [pK; pU; pX1; pZ1; pX2; pZ2]
           ===>
           (MontLadderResult
-             K pK pU pX1 pZ1 pX2 pZ2 pA pAA pB pBB pE pC pD pDA pCB
+             K pK pU pX1 pZ1 pX2 pZ2
              (montladder_gallina
                 (fun i => Z.testbit (sceval K) (Z.of_nat i))
                 (eval U mod M))).
@@ -153,7 +142,6 @@ Section __.
     Definition downto_inv
                swap_var X1_var Z1_var X2_var Z2_var K_var
                K K_ptr X1_ptr Z1_ptr X2_ptr Z2_ptr Rl
-               A_ptr AA_ptr B_ptr BB_ptr E_ptr C_ptr D_ptr DA_ptr CB_ptr
                (locals : Semantics.locals)
                (_ : nat)
                (gst : bool)
@@ -168,8 +156,7 @@ Section __.
       let X2z := fst P2 in
       let Z2z := snd P2 in
       let swapped := gst in
-      liftexists X1_ptr' Z1_ptr' X2_ptr' Z2_ptr'
-                 X1 Z1 X2 Z2 A AA B BB E C D DA CB,
+      liftexists X1_ptr' Z1_ptr' X2_ptr' Z2_ptr' X1 Z1 X2 Z2,
         (emp (bounded_by tight_bounds X1
               /\ bounded_by tight_bounds Z1
               /\ bounded_by tight_bounds X2
@@ -196,12 +183,7 @@ Section __.
                   * Var X2_var X2_ptr' * Var Z2_var Z2_ptr'
                   * Rl)%sep locals)
          * (Scalar K_ptr K * Bignum X1_ptr' X1 * Bignum Z1_ptr' Z1
-            * Bignum X2_ptr' X2 * Bignum Z2_ptr' Z2
-            * Placeholder A_ptr A * Placeholder AA_ptr AA
-            * Placeholder B_ptr B * Placeholder BB_ptr BB
-            * Placeholder E_ptr E * Placeholder C_ptr C
-            * Placeholder D_ptr D * Placeholder DA_ptr DA
-            * Placeholder CB_ptr CB))%sep.
+            * Bignum X2_ptr' X2 * Bignum Z2_ptr' Z2))%sep.
 
     Definition downto_ghost_step
                (K : scalar) (st : point * point * bool)
@@ -326,8 +308,7 @@ Section __.
       end.
 
     Derive montladder_body SuchThat
-           (let args := ["K"; "U"; "X1"; "Z1"; "X2"; "Z2";
-                           "A"; "AA"; "B"; "BB"; "E"; "C"; "D"; "DA"; "CB"] in
+           (let args := ["K"; "U"; "X1"; "Z1"; "X2"; "Z2"] in
             let montladder := ("montladder", (args, [], montladder_body)) in
             program_logic_goal_for
               montladder
@@ -377,8 +358,7 @@ Section __.
             (Inv :=
                downto_inv
                  _ x1_var z1_var x2_var z2_var _
-                 _ pK pX1 pZ1 pX2 pZ2
-                 _ pA pAA pB pBB pE pC pD pDA pCB);
+                 _ pK pX1 pZ1 pX2 pZ2 _);
         [ .. | subst L | subst L ].
       { cbv [downto_inv].
         setup_downto_inv_init.
@@ -467,7 +447,7 @@ Section __.
           (* first, resolve evars *)
           all:lazymatch goal with
               | |- @sep _ _ Semantics.mem _ _ _ =>
-                change Placeholder with Bignum; ecancel_assumption
+              change Placeholder with Bignum in *; ecancel_assumption
               | |- @sep _ _ Semantics.locals _ _ ?locals =>
                 subst_lets_in_goal; push_map_remove;
                   let locals := match goal with |- ?P ?l => l end in
@@ -512,8 +492,20 @@ Section __.
                | x := cswap _ _ _ |- _ => subst x
                end.
 
-        safe_field_compile_step.
-        repeat safe_compile_step.
+        (* in-place inversion *)
+        simple eapply compile_inv.
+        3: {
+          repeat rewrite_cswap_iff1_with_evar_frame.
+          ecancel_assumption.
+        }
+        3: {
+          unshelve erewrite (_ : Placeholder _ _ = Bignum _ (fst (cswap b x4 x6))); shelve_unifiable.
+          1: exact eq_refl.
+          repeat rewrite_cswap_iff1_with_evar_frame.
+          ecancel_assumption. }
+
+        1,2,3,4: solve[solve_field_subgoals_with_cswap].
+        intros.
 
         (* the output of this last operation needs to be stored in the pointer
            for the output, so we guide the automation to the right pointer *)
@@ -528,7 +520,8 @@ Section __.
         compile_done. cbv [MontLadderResult].
         (* destruct the hypothesis identifying the new pointers as some swapping
            of the original ones *)
-        destruct_one_match_hyp_of_type bool.
+        (* andreser: idk why I am destructing two things here *)
+        destruct b, gst; cbn [cswap] in *.
         all:cleanup; subst.
         all:lift_eexists.
         all:sepsimpl; [ reflexivity | ].
@@ -541,56 +534,66 @@ End __.
 Require Import bedrock2.NotationsCustomEntry.
 Require Import bedrock2.NotationsInConstr.
 Coercion expr.var : string >-> Syntax.expr.
-Local Open Scope bedrock_expr.
 Print montladder_body.
 *)
-(* fun (field_parameters : FieldParameters)
- *   (scalar_field_parameters : ScalarFieldParameters)
- *   (zbound : Z) =>
- * (cmd.call [] bignum_literal [(uintptr_t)1ULL; "X1"];;
- *  cmd.call [] bignum_literal [(uintptr_t)0ULL; "Z1"];;
- *  cmd.call [] bignum_copy ["U"; "X2"];;
- *  cmd.call [] bignum_literal [(uintptr_t)1ULL; "Z2"];;
- *  "v6" = (uintptr_t)0ULL;;
- *  "v7" = (uintptr_t)zboundULL;;
- *  (while ((uintptr_t)0ULL < "v7") {{
- *     "v7" = "v7" - (uintptr_t)1ULL;;
- *     cmd.call ["v8"] sctestbit ["K"; "v7"];;
- *     "v9" = "v6" .^ "v8";;
- *     (if ("v9") {{
- *        (("tmp" = "X1";;
- *          "X1" = "X2");;
- *         "X2" = "tmp");;
- *        cmd.unset "tmp"
- *      }});;
- *     (if ("v9") {{
- *        (("tmp" = "Z1";;
- *          "Z1" = "Z2");;
- *         "Z2" = "tmp");;
- *        cmd.unset "tmp"
- *      }});;
- *     cmd.call [] "ladderstep"
- *       ["U"; "X1"; "Z1"; "X2"; "Z2"; "A"; "AA"; "B"; "BB"; "E"; "C"; "D";
- *       "DA"; "CB"];;
- *     "v6" = "v8";;
- *     cmd.unset "v9";;
- *     cmd.unset "v8";;
- *     /*skip*/
- *   }});;
- *  (if ("v6") {{
- *     (("tmp" = "X1";;
- *       "X1" = "X2");;
- *      "X2" = "tmp");;
- *     cmd.unset "tmp"
- *   }});;
- *  (if ("v6") {{
- *     (("tmp" = "Z1";;
- *       "Z1" = "Z2");;
- *      "Z2" = "tmp");;
- *     cmd.unset "tmp"
- *   }});;
- *  cmd.call [] inv ["Z1"; "A"];;
- *  cmd.call [] mul ["X1"; "A"; "U"];;
- *  /*skip*/)%bedrock_cmd
- *      : FieldParameters -> ScalarFieldParameters -> Z -> cmd
- *)
+(*
+montladder_body = 
+fun (semantics : Semantics.parameters)
+  (semantics_ok : Semantics.parameters_ok semantics)
+  (field_parameters : FieldParameters)
+  (scalar_field_parameters : ScalarFieldParameters) 
+  (zbound : Z) =>
+(bedrock_func_body:(bignum_literal(coq:((uintptr_t)1ULL%bedrock_expr),
+                                  coq:("X1")));;
+ bedrock_func_body:(bignum_literal(coq:((uintptr_t)0ULL%bedrock_expr),
+                                  coq:("Z1")));;
+ bedrock_func_body:(bignum_copy(coq:("U"), coq:("X2")));;
+ bedrock_func_body:(bignum_literal(coq:((uintptr_t)1ULL%bedrock_expr),
+                                  coq:("Z2")));;
+ "v6" = (uintptr_t)0ULL;;
+ "v7" = (uintptr_t)word.wrap zboundULL;;
+ (while ((uintptr_t)0ULL < "v7") {{
+    "v7" = "v7" - (uintptr_t)1ULL;;
+    bedrock_func_body:(("v8") = sctestbit(coq:("K"), coq:("v7")));;
+    "v9" = "v6" .^ "v8";;
+    (if ("v9") {{
+       (("tmp" = "X1";;
+         "X1" = "X2");;
+        "X2" = "tmp");;
+       cmd.unset "tmp"
+     }});;
+    (if ("v9") {{
+       (("tmp" = "Z1";;
+         "Z1" = "Z2");;
+        "Z2" = "tmp");;
+       cmd.unset "tmp"
+     }});;
+    bedrock_func_body:("ladderstep"(coq:("U"), coq:("X1"), coq:("Z1"),
+                                   coq:("X2"), coq:("Z2")));;
+    "v6" = "v8";;
+    cmd.unset "v9";;
+    cmd.unset "v8";;
+    /*skip*/
+  }});;
+ (if ("v6") {{
+    (("tmp" = "X1";;
+      "X1" = "X2");;
+     "X2" = "tmp");;
+    cmd.unset "tmp"
+  }});;
+ (if ("v6") {{
+    (("tmp" = "Z1";;
+      "Z1" = "Z2");;
+     "Z2" = "tmp");;
+    cmd.unset "tmp"
+  }});;
+ bedrock_func_body:(inv(coq:("Z1"), coq:("Z1")));;
+ bedrock_func_body:(mul(coq:("X1"), coq:("Z1"), coq:("U")));;
+ /*skip*/)%bedrock_cmd
+     : forall semantics : Semantics.parameters,
+       Semantics.parameters_ok semantics ->
+       FieldParameters -> ScalarFieldParameters -> Z -> cmd
+
+Arguments montladder_body {semantics semantics_ok field_parameters
+  scalar_field_parameters} _%Z_scope
+*)
