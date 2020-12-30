@@ -197,6 +197,9 @@ Section Compile.
     eauto.
   Qed.
 
+  Import Lift1Prop.
+  (* We use [ex1] to work around [find ... implementing ... ...] notation and
+  * [postcondition_cmd] requiring the postcondition as a heap predicate, without room for leading quantifiers. *)
   Lemma compile_mul_using_stackalloc :
     forall (locals: Semantics.locals) (mem: Semantics.mem)
            (locals_ok : Semantics.locals -> Prop)
@@ -223,7 +226,7 @@ Section Compile.
           implementing (pred (k (eval out mod M)))
           and-returning retvars
           and-locals-post locals_ok
-          with-locals locals and-memory m and-trace tr and-rest sep (Bignum out_ptr out) R1
+          with-locals locals and-memory m and-trace tr and-rest sep (ex1 (Bignum out_ptr)) R1
           and-functions functions)) ->
       (let head := v in
        find (cmd.stackalloc out_var sizeof_bignum (cmd.seq
@@ -239,15 +242,15 @@ Section Compile.
     cbv [Placeholder] in *.
     repeat (straightline || straightline').
     split.
-    1:admit.
+    1: { case Semantics.width_cases as [Hw|Hw]; rewrite Hw; exact eq_refl. }
     straightline.
     straightline_stackalloc.
     revert H11.
     straightline_stackalloc.
     repeat (straightline || straightline').
 
-    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
-    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
+    (* cast admitted because i failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/bedrock/field/bignum.v#l32-l45 *)
     assert (old_out : bignum) by admit.
     let array := match type of H5 with (R0 * ?array)%sep _ => array end in
     assert (array = (Bignum a old_out)) as Harray by admit; rewrite Harray in H5.
@@ -263,16 +266,16 @@ Section Compile.
     2:eapply H8; eauto.
     intros ? ? ? ?.
 
-    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
-    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
-    let array := match type of Harray with ?e = _ => e end in
-    erewrite (_:Bignum a _ = array) in H16.
-    let t := type of stack in
-    assert (new_bytes : t) by admit.
-    assert (length_new_bytes : length new_bytes = length stack) by admit.
-    rewrite <-length_new_bytes in H12.
-
     destruct H16 as (?&?&?&?&?).
+    seprewrite_in open_constr:(@sep_ex1_r _ _ _ _ _ _ _) H23.
+    eapply sep_ex1_l in H23; destruct H23 as [stack_trash_bignum ?].
+
+    (* cast admitted because i failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/bedrock/field/bignum.v#l32-l45 *)
+    assert (stack2 : list Init.Byte.byte) by admit.
+    assert (length_stack2 : Datatypes.length stack2 = 32%nat) by admit.
+    replace (Bignum a stack_trash_bignum) with (array ptsto (word.of_Z 1) a stack2) in * by admit.
+
     straightline.
     straightline.
     straightline_stackdealloc.
@@ -358,7 +361,7 @@ Section Compile.
           implementing (pred (k (eval out mod M)))
           and-returning retvars
           and-locals-post locals_ok
-          with-locals locals and-memory m and-trace tr and-rest sep (Bignum out_ptr out) R1
+          with-locals locals and-memory m and-trace tr and-rest sep (ex1 (Bignum out_ptr)) R1
           and-functions functions)) ->
       (let head := v in
        find (cmd.stackalloc out_var sizeof_bignum (cmd.seq
@@ -398,16 +401,16 @@ Section Compile.
     2:eapply H8; eauto.
     intros ? ? ? ?.
 
-    (* cast admitted because I failed to track down the improved bytes<->words casting lemmas *)
-    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/Bedrock/Field/Bignum.v#L32-L45 *)
-    let array := match type of Harray with ?e = _ => e end in
-    erewrite (_:Bignum a _ = array) in H16.
-    let t := type of stack in
-    assert (new_bytes : t) by admit.
-    assert (length_new_bytes : length new_bytes = length stack) by admit.
-    rewrite <-length_new_bytes in H12.
-
     destruct H16 as (?&?&?&?&?).
+    seprewrite_in open_constr:(@sep_ex1_r _ _ _ _ _ _ _) H23.
+    eapply sep_ex1_l in H23; destruct H23 as [stack_trash_bignum ?].
+
+    (* cast admitted because i failed to track down the improved bytes<->words casting lemmas *)
+    (* https://github.com/mit-plv/fiat-crypto/blob/73364e5d25ad7a71d3a8afc0d107e9e30ef4477f/src/bedrock/field/bignum.v#l32-l45 *)
+    assert (stack2 : list Init.Byte.byte) by admit.
+    assert (length_stack2 : Datatypes.length stack2 = 32%nat) by admit.
+    replace (Bignum a stack_trash_bignum) with (array ptsto (word.of_Z 1) a stack2) in * by admit.
+
     straightline.
     straightline.
     straightline_stackdealloc.

@@ -182,7 +182,6 @@ Section __.
     | |- String _ _ <> String _ _ => clear; discriminate
     end.
 
-  Require Import AdmitAxiom.
   Derive ladderstep_body SuchThat
          (let args := ["X1"; "X2"; "Z2"; "X3"; "Z3"] in
           let ladderstep := ("ladderstep", (args, [], ladderstep_body)) in
@@ -205,7 +204,7 @@ Section __.
     Z.push_pull_mod; pull_mod; simple eapply compile_sub_using_stackalloc with (out_var := "D"); t; rename out into D.
     clear dependent m3.
     clear dependent m2.
-    erewrite (eq_refl : Bignum _ A = Placeholder _ _) in *.
+    erewrite (eq_refl : Bignum _ A = Placeholder _ _) in H29.
     safe_compile_step; rename out into DA.
     clear dependent m4.
     
@@ -233,13 +232,8 @@ Section __.
            end.
     1:reflexivity.
     all : trivial.
-    (* stuck here because compile_x_using_stackalloc lemmas are too strict
-    * about the value of the stack-allocated bignum at the time of stack deallocation.
-    * a quickfix would be to stick an existential inside the "rest" clause in the
-    * specification of the continuation, but I won't go doing that just yet until I
-    * understand why the specifications use the style they do in the first place *)
-    replace C with CB by case proof_admitted.
-    replace A with DA by case proof_admitted.
+    repeat seprewrite open_constr:(@sep_ex1_r _ _ _ _ _ _ _).
+    eapply sep_ex1_l, ex_intro, sep_assoc, sep_ex1_l, ex_intro.
     ecancel_assumption.
   Qed.
 End __.
